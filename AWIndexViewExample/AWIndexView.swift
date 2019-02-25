@@ -9,15 +9,22 @@
 import UIKit
 
 protocol AWIndexViewDelegate: class {
+    /// Action performed when user drags in index view and path changes.
     func indexViewChanged(indexPath: IndexPath)
+    
+    /// Number of items for section.
     func numberOfItems(in section: Int) -> Int
+    
+    /// Array of section indexes.
     var sectionIndexes: [String] { get }
+    
+    /// Theme used to customize index view's appearance.
     var indexViewTheme: AWIndexView.Theme { get }
 }
 
 extension AWIndexViewDelegate {
     var indexViewTheme: AWIndexView.Theme {
-        return AWIndexView.Theme(backgroundColor: .white, tintColor: UIButton().tintColor, font: UIFont.systemFont(ofSize: 12), borderColor: .gray)
+        return AWIndexView.Theme(backgroundColor: .white, tintColor: UIButton().tintColor, borderColor: .lightGray, font: UIFont.systemFont(ofSize: 12, weight: .medium))
     }
 }
 
@@ -43,7 +50,17 @@ class AWIndexView: UIView {
     
     public var verticalSpacing: CGFloat = 16
     public var interLabelSpacing: CGFloat = 4
+    
+    /// Value indicating which edge the view will 'stick' to.
+    /// Default is left for RTL languages and right for others.
     public var edge: Edge = .default
+    
+    public var shouldHideWhenNotActive = true {
+        didSet {
+            alpha = shouldHideWhenNotActive ? 0.02 : 1
+        }
+    }
+    public var isDragging = false
     
     init(delegate: AWIndexViewDelegate) {
         self.delegate = delegate
@@ -60,6 +77,7 @@ class AWIndexView: UIView {
         configureStackView()
         layer.cornerRadius = 6
         layer.borderWidth = 0.7
+        alpha = 0.02
         
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleGesture(_:)))
         addGestureRecognizer(tap)
@@ -67,12 +85,15 @@ class AWIndexView: UIView {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleGesture(_:)))
         addGestureRecognizer(pan)
         
-        guard let delegate = delegate else { return }
-        setLabels(with: delegate.sectionIndexes)
-        applyTheme(delegate.indexViewTheme, animated: false)
+        setup()
     }
     
     private func setLabels(with indexes: [String]) {
+        if let labels = labels {
+            for pair in labels {
+                pair.value.removeFromSuperview()
+            }
+        }
         labels = [:]
         for index in indexes {
             insert(new: index)
@@ -155,11 +176,21 @@ class AWIndexView: UIView {
             ])
     }
     
+    /// Loads new section indexes and theme.
+    public func setup() {
+        guard let delegate = delegate else { return }
+        setLabels(with: delegate.sectionIndexes)
+        applyTheme(delegate.indexViewTheme, animated: false)
+    }
+    
     /// Inserts new label into stack view.
     public func insert(new index: String) {
         let label = UILabel(frame: .zero)
+        label.textAlignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = index
+        label.textColor = delegate?.indexViewTheme.tintColor
+        label.font = delegate?.indexViewTheme.font
         labels.updateValue(label, forKey: index)
         stackView.addArrangedSubview(label)
     }
@@ -174,18 +205,29 @@ class AWIndexView: UIView {
     }
     
     @objc private func handleGesture(_ sender: UIGestureRecognizer) {
-        
-        let pointY = sender.location(in: self).y
-        
-        // procent we frame, min żeby nie wyszło poza section titles a max żeby większe od 0
-        let index = max(min(Int(pointY / frame.height * CGFloat(labels.count)), labels.count - 1), 0)
-        // procent we frame * ilość titles - wysokość sekcji poniżej
-        let percentInSection = max(pointY / frame.height * CGFloat(labels.count) - CGFloat(index), 0)
-        scrollToIndex(index, percentInSection: percentInSection)
+        switch sender.state {
+        case .began:
+            show(completion: nil)
+            isDragging = true
+            feedbackGenerator.prepare()
+        case .changed:
+            let pointY = sender.location(in: self).y
+            
+            // procent we frame, min żeby nie wyszło poza section titles a max żeby większe od 0
+            let index = max(min(Int(pointY / frame.height * CGFloat(labels.count)), labels.count - 1), 0)
+            // procent we frame * ilość titles - wysokość sekcji poniżej
+            let percentInSection = max(pointY / frame.height * CGFloat(labels.count) - CGFloat(index), 0)
+            scrollToIndex(index, percentInSection: percentInSection)
+        default:
+            isDragging = false
+            hide(completion: nil)
+        }
     }
     
+    private lazy var feedbackGenerator = UISelectionFeedbackGenerator()
     private var currentIndexSection = 0
-    func scrollToIndex(_ index: Int, percentInSection: CGFloat) {
+    
+    private func scrollToIndex(_ index: Int, percentInSection: CGFloat) {
         guard let delegate = delegate else {
             return
         }
@@ -212,59 +254,57 @@ class AWIndexView: UIView {
         }
     }
     
-//    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-//        super.touchesBegan(touches, with: event)
-//        feedbackGenerator.prepare()
-//        isDragging = true
-//        if shouldHideWhenNotActive {
-//            isVisible = true
-//        }
-//    }
-//
-//    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-//        super.touchesEnded(touches, with: event)
-//        if shouldHideWhenNotActive {
-//            isVisible = false
-//        }
-//        isDragging = false
-//    }
+    private func vibrate() {
+        feedbackGenerator.selectionChanged()
+    }
     
-    @available(iOS 10.0, *) private func vibrate() {
-        let feedbackGenerator = UISelectionFeedbackGenerator()
-        feedbackGenerator.prepare()
+    public func show(completion: (() -> Void)?) {
+        if isDragging { return }
+        UIView.animate(withDuration: 0.2, animations: {
+            self.alpha = 1
+        }) { _ in
+            completion?()
+        }
+    }
+    
+    public func hide(completion: (() -> Void)?) {
+        if isDragging { return }
+        UIView.animate(withDuration: 0.2, animations: {
+            self.alpha = 0.02
+        }) { _ in
+            completion?()
+        }
+    }
+    
+    /// Shows index view to user for given duration and after delay.
+    public func flash(delay: TimeInterval = 0, duration: TimeInterval = 2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            self.show {
+                DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+                    self.hide(completion: nil)
+                }
+            }
+        }
     }
 
 }
 
 extension AWIndexView {
     enum Edge {
+        /// Left edge of the screen.
         case left
-        
+        /// Right edge of the screen.
         case right
-        
-        /// Left for RTL languages, right for others
+        /// Left for RTL languages, right for others.
         case `default`
-        
-        var c: Edge {
-            switch UIApplication.shared.userInterfaceLayoutDirection {
-            case .leftToRight:
-                return .right
-            case .rightToLeft:
-                return .left
-            }
-        }
     }
     
     struct Theme {
         let backgroundColor: UIColor
+        /// Color used as text color.
         let tintColor: UIColor
-        let font: UIFont
         let borderColor: UIColor
-    }
-}
-
-extension UIViewController {
-    func addIndexView(_ indexView: AWIndexView) {
-        view.addSubview(indexView)
+        /// Font used by labels.
+        let font: UIFont
     }
 }

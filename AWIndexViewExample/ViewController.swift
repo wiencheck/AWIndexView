@@ -26,7 +26,19 @@ class ViewController: UIViewController {
         
         sort()
         indexView = AWIndexView(delegate: self)
-        addIndexView(indexView)
+        //indexView.shouldHideWhenNotActive = false
+        view.addSubview(indexView)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            self.sectionTitles.append("KUPA")
+            self.indexView.setup()
+            self.indexView.flash(delay: 1)
+        }
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        indexView.flash(delay: 1)
     }
     
     private func sort() {
